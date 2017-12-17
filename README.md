@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 CIFAR-10 is a common benchmark in machine learning for image recognition.
 
 http://www.cs.toronto.edu/~kriz/cifar.html
@@ -8,3 +9,6 @@ Detailed instructions on how to get started available at:
 
 http://tensorflow.org/tutorials/deep_cnn/
 
+=======
+# Amui-Modes-tensorflow
+>>>>>>> eb9d213274923dda2273506872ee7e5a435b558e
