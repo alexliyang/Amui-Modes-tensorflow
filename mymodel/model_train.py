@@ -7,6 +7,7 @@ the default common line parameter:
 @data_dir(string)-----Path to the dataset directory
 """
 
+#__future__：用于python版本兼容，把下一个新版本的特性导入到当前版本
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -23,7 +24,7 @@ import tensorflow as tf
 
 import model
 
-
+# 用于支持接受命令行传递参数
 FLAGS = tf.app.flags.FLAGS
 
 tf.app.flags.DEFINE_string('train_dir', '/home/ccx/AmuiData/model_train',
