@@ -29,10 +29,10 @@ import model
 # 用于支持接受命令行传递参数
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('train_dir', '/home/ccx/AmuiData/model_train',
+tf.app.flags.DEFINE_string('train_dir', '/home/ccx/AmuiData/test_model_train',
                            """Directory where to write event logs """
                            """and checkpoint.""")
-tf.app.flags.DEFINE_integer('max_steps', 10000,
+tf.app.flags.DEFINE_integer('max_steps', 10,
                             """Number of batches to run.""")
 tf.app.flags.DEFINE_boolean('log_device_placement', False,
                             """Whether to log device placement.""")
@@ -45,6 +45,7 @@ def train():
 
     # Get images and labels for model.
     images, labels = model.distorted_inputs()
+    print(images.shape, ", ", labels.shape) # (128, 24, 24, 3) ,(128,) so it's (N, W, H, C) and ()
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
