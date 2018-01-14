@@ -29,7 +29,7 @@ import model
 # 用于支持接受命令行传递参数
 FLAGS = tf.app.flags.FLAGS
 
-tf.app.flags.DEFINE_string('train_dir', '/home/ccx/AmuiData/model_train',
+tf.app.flags.DEFINE_string('train_dir', '/home/ccx/AmuiData/cifar10_train',
                            """Directory where to write event logs """
                            """and checkpoint.""")
 tf.app.flags.DEFINE_integer('max_steps', 10000,

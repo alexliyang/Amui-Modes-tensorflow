@@ -63,9 +63,29 @@ if __name__ == '__main__':
         choices=['C10', 'C10+', 'C100', 'C100+', 'SVHN'],
         default='C10',
         help='What dataset should be used')
+
+    parser.add_argument(
+        '--stages', type=str, metavar='STAGE DEPTH',
+        help='per layer depth')
+    parser.add_argument(
+        '--growth', type=str, metavar='GROWTH RATE',
+        help='per layer growth')
+
+    parser.add_argument(
+        '--group_1x1', type=int, metavar='G', default=4,
+        help='1x1 group convolution (default: 4)')
+    parser.add_argument(
+        '--group_3x3', type=int, metavar='G', default=4,
+        help='3x3 group convolution (default: 4)')
+    parser.add_argument(
+        '--condense_factor', type=int, metavar='C', default=4,
+        help='condense factor (default: 4)')
+
+    '''
     parser.add_argument(
         '--total_blocks', '-tb', type=int, default=3, metavar='',
         help='Total blocks of layers stack (default: %(default)s)')
+    '''
     parser.add_argument(
         '--keep_prob', '-kp', type=float, metavar='',
         help="Keep probability for dropout.")
@@ -115,6 +135,8 @@ if __name__ == '__main__':
         args.reduction = 1.0
     elif args.model_type == 'DenseNet-BC':
         args.bc_mode = True
+
+    args.total_blocks = len(list(map(int, growth.split('-'))))
 
     model_params = vars(args)
 

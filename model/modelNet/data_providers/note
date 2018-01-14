@@ -1,0 +1,22 @@
+数据下载路径存放在  /home/ubuntu
+
+
+data_provider = get_data_provider_by_name(args.dataset, train_params)
+model = modelNet(data_provider=data_provider, **model_params)
+modelNet是模型的类名。
+在run_model中，会将data_provider传入model的类中。在model中可通过以下属性及方法获取相关数据.
+
+data_provider.data_shape：返回图像大小。如果是cifar，返回（32,32,3）
+data_provider.n_classes：返回数据集的类别数。如果是cifar10，返回10
+
+train_data = data_provider.train：返回训练数据的相关数据的类。该类的使用如下说明.
+val_data = data_provider.validation：返回测试数据集的相关数据的类。该类的使用如下说明.
+
+
+train_data.num_examples:返回训练数据集的大小。
+train_data.next_batch(batch_size):返回一个batch_size大小的数据集。
+在迭代的过程中，每训练完一个batch_size的数据后，通过该方法，再获取下一个batch_size大小的数据。
+返回值为image_batch, label_batch。shape分别为(N, 32,32,3) 、(N, 1)，N是batch_size
+这么调用： image, label = tran_data.next_batch(batch_size)
+
+val_data的使用方法与train_data一样

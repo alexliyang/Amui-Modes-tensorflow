@@ -11,8 +11,8 @@ TF_VERSION = float('.'.join(tf.__version__.split('.')[:2]))
 
 
 class DenseNet:
-    def __init__(self, data_provider, growth_rate, depth,
-                 total_blocks, keep_prob,
+    def __init__(self, data_provider, growth, depth,
+                 total_blocks,stages, keep_prob,
                  weight_decay, nesterov_momentum, model_type, dataset,
                  should_save_logs, should_save_model,
                  renew_logs=False,
@@ -48,12 +48,19 @@ class DenseNet:
         self.data_shape = data_provider.data_shape # (W,H,C)
         self.n_classes = data_provider.n_classes
         self.depth = depth
-        self.growth_rate = growth_rate
+
+        #self.growth_rate = growth_rate
         # how many features will be received after first convolution
         # value the same as in the original Torch code
-        self.first_output_features = growth_rate * 2
+        self.growth = growth
+        self.first_output_features = growth[0] * 2
         self.total_blocks = total_blocks
-        self.layers_per_block = (depth - (total_blocks + 1)) // total_blocks
+        self.stages = stages
+        self.group_1x1 = kwargs['group_1x1']
+        self.group_3x3 = kwargs['group_3x3']
+        self.condense_factor = kwargs['condense_factor']
+
+        #self.layers_per_block = (depth - (total_blocks + 1)) // total_blocks
         self.bc_mode = bc_mode
         # compression rate at the transition layers
         self.reduction = reduction
@@ -98,7 +105,7 @@ class DenseNet:
             self.sess.run(tf.global_variables_initializer())
             logswriter = tf.summary.FileWriter
         self.saver = tf.train.Saver()
-        self.summary_writer = logswriter(self.logs_path)
+        self.summary_writer = logswriter(self.logs_path, graph_def=self.sess.graph_def) # change by ccx, add the graph_def
 
     def _count_trainable_params(self):
         total_parameters = 0
@@ -150,11 +157,9 @@ class DenseNet:
         self.saver.restore(self.sess, self.save_path)
         print("Successfully load model from save path: %s" % self.save_path)
 
-    def log_loss_accuracy(self, loss, accuracy, epoch, prefix,
-                          should_print=True):
+    def log_loss_accuracy(self, loss, accuracy, epoch, prefix, should_print=True):
         if should_print:
-            print("mean cross_entropy: %f, mean accuracy: %f" % (
-                loss, accuracy))
+            print("mean cross_entropy: %f, mean accuracy: %f" % (loss, accuracy))
         summary = tf.Summary(value=[
             tf.Summary.Value(
                 tag='loss_%s' % prefix, simple_value=float(loss)),
@@ -193,8 +198,7 @@ class DenseNet:
             # ReLU
             output = tf.nn.relu(output)
             # convolution
-            output = self.conv2d(
-                output, out_features=out_features, kernel_size=kernel_size)
+            output = self.conv2d(output, out_features=out_features, kernel_size=kernel_size)
             # dropout(in case of training and in case it is no 1.0)
             output = self.dropout(output)
         return output
@@ -204,29 +208,52 @@ class DenseNet:
             output = self.batch_norm(_input)
             output = tf.nn.relu(output)
             inter_features = out_features * 4
-            output = self.conv2d(
-                output, out_features=inter_features, kernel_size=1,
-                padding='VALID')
+            output = self.conv2d(output, out_features=inter_features, kernel_size=1, padding='VALID')
             output = self.dropout(output)
         return output
+
+    def learn_group_cov(self, _input, out_features, groups):
+        '''add by ccx'''
+        with tf.variable_scope("learn_Group_Conv"):
+            output = self.batch_norm(_input)
+            output = tf.nn.relu(output)
+            output = self.dropout(output)
+            output = self.conv2d_group(output, out_features=out_features, kernel_size=1, groups=groups)
+        return output
+
+    def standard_group_cov(self, _input, out_features, groups, kernel_size=3):
+        """Function from paper H_l that performs:
+        - batch normalization
+        - ReLU nonlinearity
+        - convolution with required kernel
+        - dropout, if required
+        """
+        with tf.variable_scope("standard_group_conv"):
+            # BN
+            output = self.batch_norm(_input)
+            # ReLU
+            output = tf.nn.relu(output)
+            # convolution
+            output = self.conv2d_group(output, out_features=out_features, kernel_size=kernel_size, groups=groups)
+            # dropout(in case of training and in case it is no 1.0)
+            output = self.dropout(output)
+        return output
+
+    def check_drop(self):
+
 
     def add_internal_layer(self, _input, growth_rate):
         """Perform H_l composite function for the layer and after concatenate
         input with output from composite function.
         """
         # call composite function with 3x3 kernel
-        if not self.bc_mode:
-            comp_out = self.composite_function(
-                _input, out_features=growth_rate, kernel_size=3)
-        elif self.bc_mode:
-            bottleneck_out = self.bottleneck(_input, out_features=growth_rate)
-            comp_out = self.composite_function(
-                bottleneck_out, out_features=growth_rate, kernel_size=3)
+        self.check_drop()
+        lgc_out = self.learn_group_cov(_input, out_features=growth_rate, groups=self.group_1x1)
+        comp_out = self.standard_group_cov(lgc_out, out_features=growth_rate, kernel_size=3, groups=self.group_3x3)
         # concatenate _input with out from composite function
-        if TF_VERSION >= 1.0:
-            output = tf.concat(axis=3, values=(_input, comp_out))
-        else:
-            output = tf.concat(3, (_input, comp_out))
+
+        output = tf.concat(axis=3, values=(_input, comp_out))
+
         return output
 
     def add_block(self, _input, growth_rate, layers_per_block):
@@ -238,15 +265,8 @@ class DenseNet:
         return output
 
     def transition_layer(self, _input):
-        """Call H_l composite function with 1x1 kernel and after average
-        pooling
-        """
-        # call composite function with 1x1 kernel
-        out_features = int(int(_input.get_shape()[-1]) * self.reduction)
-        output = self.composite_function(
-            _input, out_features=out_features, kernel_size=1)
-        # run average pooling
-        output = self.avg_pool(output, k=2)
+        # run average pooling changed by ccx
+        output = self.avg_pool(_input, k=2)
         return output
 
     def transition_layer_to_classes(self, _input):
@@ -272,8 +292,15 @@ class DenseNet:
         logits = tf.matmul(output, W) + bias
         return logits
 
-    def conv2d(self, _input, out_features, kernel_size,
-               strides=[1, 1, 1, 1], padding='SAME'):
+    def conv2d(self, _input, out_features, kernel_size, strides=[1, 1, 1, 1], padding='SAME'):
+        in_features = int(_input.get_shape()[-1]) # get the last dimension, channel
+        kernel = self.weight_variable_msra(
+            [kernel_size, kernel_size, in_features, out_features],
+            name='kernel')
+        output = tf.nn.conv2d(_input, kernel, strides, padding)
+        return output
+
+    def conv2d_group(self, _input, out_features, kernel_size, strides=[1, 1, 1, 1], padding='SAME'):
         in_features = int(_input.get_shape()[-1]) # get the last dimension, channel
         kernel = self.weight_variable_msra(
             [kernel_size, kernel_size, in_features, out_features],
@@ -322,19 +349,17 @@ class DenseNet:
         return tf.get_variable(name, initializer=initial)
 
     def _build_graph(self):
-        growth_rate = self.growth_rate
-        layers_per_block = self.layers_per_block
-        # first - initial 3 x 3 conv to first_output_features
+        #growth_rate = self.growth_rate
+        #layers_per_block = self.layers_per_block
+        # first - initial 3 x 3 conv and 1x1 conv ? to first_output_features --changed by ccx
         with tf.variable_scope("Initial_convolution"):
-            output = self.conv2d(
-                self.images,
-                out_features=self.first_output_features,
-                kernel_size=3)
+            output = self.conv2d(self.images, out_features=self.first_output_features, kernel_size=3)
+            output = self.conv2d(output, out_features=self.first_output_features, kernel_size=1) #???
 
-        # add N required blocks
+        # add N DenseBlock
         for block in range(self.total_blocks):
             with tf.variable_scope("Block_%d" % block):
-                output = self.add_block(output, growth_rate, layers_per_block)
+                output = self.add_block(output, growth[block], self.stages[block])
             # last block exist without transition layer
             if block != self.total_blocks - 1:
                 with tf.variable_scope("Transition_after_block_%d" % block):
@@ -348,14 +373,11 @@ class DenseNet:
         cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
             logits=logits, labels=self.labels))
         self.cross_entropy = cross_entropy
-        l2_loss = tf.add_n(
-            [tf.nn.l2_loss(var) for var in tf.trainable_variables()])
+        l2_loss = tf.add_n([tf.nn.l2_loss(var) for var in tf.trainable_variables()])
 
         # optimizer and train step
-        optimizer = tf.train.MomentumOptimizer(
-            self.learning_rate, self.nesterov_momentum, use_nesterov=True)
-        self.train_step = optimizer.minimize(
-            cross_entropy + l2_loss * self.weight_decay)
+        optimizer = tf.train.MomentumOptimizer(self.learning_rate, self.nesterov_momentum, use_nesterov=True)
+        self.train_step = optimizer.minimize(cross_entropy + l2_loss * self.weight_decay)
 
         correct_prediction = tf.equal(
             tf.argmax(prediction, 1),
@@ -370,6 +392,7 @@ class DenseNet:
         reduce_lr_epoch_2 = train_params['reduce_lr_epoch_2']
         total_start_time = time.time()
         for epoch in range(1, n_epochs + 1):
+            self.cur_epoch = epoch # global var
             print("\n", '-' * 30, "Train epoch: %d" % epoch, '-' * 30, '\n')
             start_time = time.time()
             if epoch == reduce_lr_epoch_1 or epoch == reduce_lr_epoch_2:
@@ -377,15 +400,13 @@ class DenseNet:
                 print("Decrease learning rate, new lr = %f" % learning_rate)
 
             print("Training...")
-            loss, acc = self.train_one_epoch(
-                self.data_provider.train, batch_size, learning_rate)
+            loss, acc = self.train_one_epoch(self.data_provider.train, batch_size, learning_rate)
             if self.should_save_logs:
                 self.log_loss_accuracy(loss, acc, epoch, prefix='train')
 
             if train_params.get('validation_set', False):
                 print("Validation...")
-                loss, acc = self.test(
-                    self.data_provider.validation, batch_size)
+                loss, acc = self.test(self.data_provider.validation, batch_size)
                 if self.should_save_logs:
                     self.log_loss_accuracy(loss, acc, epoch, prefix='valid')
 
@@ -399,8 +420,7 @@ class DenseNet:
                 self.save_model()
 
         total_training_time = time.time() - total_start_time
-        print("\nTotal training time: %s" % str(timedelta(
-            seconds=total_training_time)))
+        print("\nTotal training time: %s" % str(timedelta(seconds=total_training_time)))
 
     def train_one_epoch(self, data, batch_size, learning_rate):
         num_examples = data.num_examples

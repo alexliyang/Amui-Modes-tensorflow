@@ -98,7 +98,7 @@ class DenseNet:
             self.sess.run(tf.global_variables_initializer())
             logswriter = tf.summary.FileWriter
         self.saver = tf.train.Saver()
-        self.summary_writer = logswriter(self.logs_path)
+        self.summary_writer = logswriter(self.logs_path, graph_def=self.sess.graph_def) # change by ccx, add the graph_def
 
     def _count_trainable_params(self):
         total_parameters = 0
@@ -150,11 +150,9 @@ class DenseNet:
         self.saver.restore(self.sess, self.save_path)
         print("Successfully load model from save path: %s" % self.save_path)
 
-    def log_loss_accuracy(self, loss, accuracy, epoch, prefix,
-                          should_print=True):
+    def log_loss_accuracy(self, loss, accuracy, epoch, prefix, should_print=True):
         if should_print:
-            print("mean cross_entropy: %f, mean accuracy: %f" % (
-                loss, accuracy))
+            print("mean cross_entropy: %f, mean accuracy: %f" % (loss, accuracy))
         summary = tf.Summary(value=[
             tf.Summary.Value(
                 tag='loss_%s' % prefix, simple_value=float(loss)),
@@ -193,8 +191,7 @@ class DenseNet:
             # ReLU
             output = tf.nn.relu(output)
             # convolution
-            output = self.conv2d(
-                output, out_features=out_features, kernel_size=kernel_size)
+            output = self.conv2d(output, out_features=out_features, kernel_size=kernel_size)
             # dropout(in case of training and in case it is no 1.0)
             output = self.dropout(output)
         return output
@@ -204,9 +201,7 @@ class DenseNet:
             output = self.batch_norm(_input)
             output = tf.nn.relu(output)
             inter_features = out_features * 4
-            output = self.conv2d(
-                output, out_features=inter_features, kernel_size=1,
-                padding='VALID')
+            output = self.conv2d(output, out_features=inter_features, kernel_size=1, padding='VALID')
             output = self.dropout(output)
         return output
 
@@ -216,12 +211,10 @@ class DenseNet:
         """
         # call composite function with 3x3 kernel
         if not self.bc_mode:
-            comp_out = self.composite_function(
-                _input, out_features=growth_rate, kernel_size=3)
+            comp_out = self.composite_function(_input, out_features=growth_rate, kernel_size=3)
         elif self.bc_mode:
             bottleneck_out = self.bottleneck(_input, out_features=growth_rate)
-            comp_out = self.composite_function(
-                bottleneck_out, out_features=growth_rate, kernel_size=3)
+            comp_out = self.composite_function(bottleneck_out, out_features=growth_rate, kernel_size=3)
         # concatenate _input with out from composite function
         if TF_VERSION >= 1.0:
             output = tf.concat(axis=3, values=(_input, comp_out))
@@ -243,8 +236,7 @@ class DenseNet:
         """
         # call composite function with 1x1 kernel
         out_features = int(int(_input.get_shape()[-1]) * self.reduction)
-        output = self.composite_function(
-            _input, out_features=out_features, kernel_size=1)
+        output = self.composite_function(_input, out_features=out_features, kernel_size=1)
         # run average pooling
         output = self.avg_pool(output, k=2)
         return output
@@ -272,8 +264,7 @@ class DenseNet:
         logits = tf.matmul(output, W) + bias
         return logits
 
-    def conv2d(self, _input, out_features, kernel_size,
-               strides=[1, 1, 1, 1], padding='SAME'):
+    def conv2d(self, _input, out_features, kernel_size, strides=[1, 1, 1, 1], padding='SAME'):
         in_features = int(_input.get_shape()[-1]) # get the last dimension, channel
         kernel = self.weight_variable_msra(
             [kernel_size, kernel_size, in_features, out_features],
@@ -326,10 +317,7 @@ class DenseNet:
         layers_per_block = self.layers_per_block
         # first - initial 3 x 3 conv to first_output_features
         with tf.variable_scope("Initial_convolution"):
-            output = self.conv2d(
-                self.images,
-                out_features=self.first_output_features,
-                kernel_size=3)
+            output = self.conv2d(self.images, out_features=self.first_output_features, kernel_size=3)
 
         # add N required blocks
         for block in range(self.total_blocks):
@@ -348,14 +336,11 @@ class DenseNet:
         cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
             logits=logits, labels=self.labels))
         self.cross_entropy = cross_entropy
-        l2_loss = tf.add_n(
-            [tf.nn.l2_loss(var) for var in tf.trainable_variables()])
+        l2_loss = tf.add_n([tf.nn.l2_loss(var) for var in tf.trainable_variables()])
 
         # optimizer and train step
-        optimizer = tf.train.MomentumOptimizer(
-            self.learning_rate, self.nesterov_momentum, use_nesterov=True)
-        self.train_step = optimizer.minimize(
-            cross_entropy + l2_loss * self.weight_decay)
+        optimizer = tf.train.MomentumOptimizer(self.learning_rate, self.nesterov_momentum, use_nesterov=True)
+        self.train_step = optimizer.minimize(cross_entropy + l2_loss * self.weight_decay)
 
         correct_prediction = tf.equal(
             tf.argmax(prediction, 1),
@@ -377,15 +362,13 @@ class DenseNet:
                 print("Decrease learning rate, new lr = %f" % learning_rate)
 
             print("Training...")
-            loss, acc = self.train_one_epoch(
-                self.data_provider.train, batch_size, learning_rate)
+            loss, acc = self.train_one_epoch(self.data_provider.train, batch_size, learning_rate)
             if self.should_save_logs:
                 self.log_loss_accuracy(loss, acc, epoch, prefix='train')
 
             if train_params.get('validation_set', False):
                 print("Validation...")
-                loss, acc = self.test(
-                    self.data_provider.validation, batch_size)
+                loss, acc = self.test(self.data_provider.validation, batch_size)
                 if self.should_save_logs:
                     self.log_loss_accuracy(loss, acc, epoch, prefix='valid')
 
@@ -399,8 +382,7 @@ class DenseNet:
                 self.save_model()
 
         total_training_time = time.time() - total_start_time
-        print("\nTotal training time: %s" % str(timedelta(
-            seconds=total_training_time)))
+        print("\nTotal training time: %s" % str(timedelta(seconds=total_training_time)))
 
     def train_one_epoch(self, data, batch_size, learning_rate):
         num_examples = data.num_examples

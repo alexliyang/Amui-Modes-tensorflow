@@ -172,8 +172,7 @@ class CifarDataProvider(DataProvider):
     @property
     def save_path(self):
         if self._save_path is None:
-            self._save_path = os.path.join(
-                tempfile.gettempdir(), 'cifar%d' % self.n_classes)
+            self._save_path = os.path.join(tempfile.gettempdir(), 'cifar%d' % self.n_classes)
         return self._save_path
 
     @property
@@ -211,8 +210,8 @@ class CifarDataProvider(DataProvider):
             images = images.swapaxes(1, 3).swapaxes(1, 2) # shape:(N, 32,32,3)
             images_res.append(images)
             labels_res.append(images_and_labels[labels_key])
-        images_res = np.vstack(images_res)
-        labels_res = np.hstack(labels_res)
+        images_res = np.vstack(images_res) # shape:(N, 32, 32, 3)
+        labels_res = np.hstack(labels_res) # shape:(N,1)
         if self.one_hot:
             labels_res = self.labels_to_one_hot(labels_res)
         return images_res, labels_res
