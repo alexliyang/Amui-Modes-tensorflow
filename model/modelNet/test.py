@@ -66,7 +66,7 @@ print(conv1.get_shape())
 #print(output2.get_shape())
 '''
 
-
+'''
 class A:
     def __init__(self, f, b=0, a=0, **x):
         self.a = a
@@ -101,6 +101,7 @@ args1 = vars(args)
 a = A(a=1,b=2,**args1)
 #print(a.a)
 '''
+'''
 epoch=1
 
 print("\n", '-' * 30, "Train epoch: %d" % epoch, '-' * 30, '\n')
@@ -111,3 +112,18 @@ growth = list(map(int, growth.split('-')))
 num = len(growth)
 print(num)
 '''
+
+'''
+a = 1
+
+for i in [0,1]:
+    if a < a*i:
+        s = i
+        print('---', s)
+        break
+else:
+    s=-1
+print(s)
+
+'''
+

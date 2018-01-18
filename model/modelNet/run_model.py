@@ -1,13 +1,15 @@
 import argparse
 
+#from model.condenseNet import CondenseNet
+from model.modelV1 import CondenseNet
 from data_providers.utils import get_data_provider_by_name
 
 train_params_cifar = {
-    'batch_size': 64,
-    'n_epochs': 8,
+    'batch_size': 10,
+    'n_epochs': 10,
     'initial_learning_rate': 0.1,
-    'reduce_lr_epoch_1': 4,  # epochs * 0.5
-    'reduce_lr_epoch_2': 6,  # epochs * 0.75
+    'reduce_lr_epoch_1': 5,  # epochs * 0.5
+    'reduce_lr_epoch_2': 7,  # epochs * 0.75
     'validation_set': True,
     'validation_split': None,  # None or float
     'shuffle': 'every_epoch',  # None, once_prior_train, every_epoch
@@ -26,12 +28,12 @@ train_params_svhn = {
     'normalization': 'divide_255',
 }
 
+
 def get_train_params_by_name(name):
     if name in ['C10', 'C10+', 'C100', 'C100+']:
         return train_params_cifar
     if name == 'SVHN':
         return train_params_svhn
-
 
 
 if __name__ == '__main__':
@@ -44,7 +46,6 @@ if __name__ == '__main__':
         help='Test model for required dataset if pretrained model exists.'
              'If provided together with `--train` flag testing will be'
              'performed right after training.')
-
     parser.add_argument(
         '--model_type', '-m', type=str, choices=['DenseNet', 'DenseNet-BC'],
         default='DenseNet',
@@ -58,7 +59,6 @@ if __name__ == '__main__':
         '--depth', '-d', type=int, choices=[40, 100, 190, 250],
         default=40,
         help='Depth of whole network, restricted to paper choices')
-
     parser.add_argument(
         '--dataset', '-ds', type=str,
         choices=['C10', 'C10+', 'C100', 'C100+', 'SVHN'],
@@ -66,19 +66,52 @@ if __name__ == '__main__':
         help='What dataset should be used')
 
     parser.add_argument(
+        '--stages', type=str, metavar='STAGE DEPTH',
+        help='per layer depth')
+    parser.add_argument(
+        '--bottleneck', default=4, type=int, metavar='B',
+        help='bottleneck (default: 4)')
+    parser.add_argument(
+        '--growth', type=str, metavar='GROWTH RATE',
+        help='per layer growth')
+
+    parser.add_argument(
         '--total_blocks', '-tb', type=int, default=3, metavar='',
         help='Total blocks of layers stack (default: %(default)s)')
 
     parser.add_argument(
+        '--group_1x1', type=int, metavar='G', default=4,
+        help='1x1 group convolution (default: 4)')
+    parser.add_argument(
+        '--group_3x3', type=int, metavar='G', default=4,
+        help='3x3 group convolution (default: 4)')
+    parser.add_argument(
+        '--condense_factor', type=int, metavar='C', default=4,
+        help='condense factor (default: 4)')
+
+    '''
+    parser.add_argument(
+        '--total_blocks', '-tb', type=int, default=3, metavar='',
+        help='Total blocks of layers stack (default: %(default)s)')
+    '''
+    parser.add_argument(
+        '--keep_prob', '-kp', type=float, metavar='',
+        help="Keep probability for dropout.")
+    parser.add_argument(
         '--weight_decay', '-wd', type=float, default=1e-4, metavar='',
+        help='Weight decay for optimizer (default: %(default)s)')
+    parser.add_argument(
+        '--lasso_decay', '-ld', type=float, default=1e-4, metavar='',
         help='Weight decay for optimizer (default: %(default)s)')
     parser.add_argument(
         '--nesterov_momentum', '-nm', type=float, default=0.9, metavar='',
         help='Nesterov momentum (default: %(default)s)')
-
     parser.add_argument(
         '--reduction', '-red', type=float, default=0.5, metavar='',
         help='reduction Theta at transition layer for DenseNets-BC models')
+    parser.add_argument(
+        '--group_lasso_lambda', default=0.001, type=float, metavar='LASSO',
+        help='group lasso loss weight (default: 0)')
 
     parser.add_argument(
         '--logs', dest='should_save_logs', action='store_true',
@@ -106,6 +139,20 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    if not args.keep_prob:
+        if args.dataset in ['C10', 'C100', 'SVHN']:
+            args.keep_prob = 0.8
+        else:
+            args.keep_prob = 1.0
+    if args.model_type == 'DenseNet':
+        args.bc_mode = False
+        args.reduction = 1.0
+    elif args.model_type == 'DenseNet-BC':
+        args.bc_mode = True
+
+    args.total_blocks = len(list(map(int, args.growth.split('-'))))
+    args.stages = list(map(int, args.stages.split('-')))
+    args.growth = list(map(int, args.growth.split('-')))
     model_params = vars(args)
 
     if not args.train and not args.test:
@@ -114,7 +161,7 @@ if __name__ == '__main__':
 
     # some default params dataset/architecture related
     train_params = get_train_params_by_name(args.dataset)
-    print("Model Params:")
+    print("Params:")
     for k, v in model_params.items():
         print("\t%s: %s" % (k, v))
     print("Train params:")
@@ -123,10 +170,8 @@ if __name__ == '__main__':
 
     print("Prepare training data...")
     data_provider = get_data_provider_by_name(args.dataset, train_params)
-
     print("Initialize the model..")
-    model = DenseNet(data_provider=data_provider, **model_params)
-
+    model = CondenseNet(data_provider=data_provider, **model_params)
     if args.train:
         print("Data provider train images: ", data_provider.train.num_examples)
         model.train_all_epochs(train_params)

@@ -4,11 +4,11 @@ from models.dense_net import DenseNet
 from data_providers.utils import get_data_provider_by_name
 
 train_params_cifar = {
-    'batch_size': 64,
-    'n_epochs': 8,
+    'batch_size': 10,
+    'n_epochs': 20,
     'initial_learning_rate': 0.1,
-    'reduce_lr_epoch_1': 4,  # epochs * 0.5
-    'reduce_lr_epoch_2': 6,  # epochs * 0.75
+    'reduce_lr_epoch_1': 10,  # epochs * 0.5
+    'reduce_lr_epoch_2': 15,  # epochs * 0.75
     'validation_set': True,
     'validation_split': None,  # None or float
     'shuffle': 'every_epoch',  # None, once_prior_train, every_epoch
@@ -68,6 +68,9 @@ if __name__ == '__main__':
         '--stages', type=str, metavar='STAGE DEPTH',
         help='per layer depth')
     parser.add_argument(
+        '--bottleneck', default=4, type=int, metavar='B',
+        help='bottleneck (default: 4)')
+    parser.add_argument(
         '--growth', type=str, metavar='GROWTH RATE',
         help='per layer growth')
 
@@ -93,11 +96,17 @@ if __name__ == '__main__':
         '--weight_decay', '-wd', type=float, default=1e-4, metavar='',
         help='Weight decay for optimizer (default: %(default)s)')
     parser.add_argument(
+        '--lasso_decay', '-ld', type=float, default=1e-4, metavar='',
+        help='Weight decay for optimizer (default: %(default)s)')
+    parser.add_argument(
         '--nesterov_momentum', '-nm', type=float, default=0.9, metavar='',
         help='Nesterov momentum (default: %(default)s)')
     parser.add_argument(
         '--reduction', '-red', type=float, default=0.5, metavar='',
         help='reduction Theta at transition layer for DenseNets-BC models')
+    parser.add_argument(
+        '--group_lasso_lambda', default=0., type=float, metavar='LASSO',
+        help='group lasso loss weight (default: 0)')
 
     parser.add_argument(
         '--logs', dest='should_save_logs', action='store_true',
@@ -156,7 +165,7 @@ if __name__ == '__main__':
     print("Prepare training data...")
     data_provider = get_data_provider_by_name(args.dataset, train_params)
     print("Initialize the model..")
-    model = DenseNet(data_provider=data_provider, **model_params)
+    model = CondenseNet(data_provider=data_provider, **model_params)
     if args.train:
         print("Data provider train images: ", data_provider.train.num_examples)
         model.train_all_epochs(train_params)

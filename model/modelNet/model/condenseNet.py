@@ -10,15 +10,17 @@ import tensorflow as tf
 class CondenseNet:
     globalprogress = 0.0
 
-    def __init__(self, data_provider, increasing_growth_rate, depth,
-                 total_blocks, keep_prob, lasso_decay,
+    def __init__(self, data_provider, depth,
+                 total_blocks, keep_prob,
                  weight_decay, nesterov_momentum, model_type, dataset,
                  should_save_logs, should_save_model,
                  renew_logs=False,
-                 reduction=1.0,
+                 reduction=0.5,
                  bc_mode=False,
-                 group=1,
-                 condense_factor=1,
+                 group=4,
+                 condense_factor=4,
+                 lasso_decay=0.1,
+                 increasing_growth_rate=8,
                  **kwargs):
         """
         Class to implement networks from this paper
@@ -81,8 +83,8 @@ class CondenseNet:
         self.batches_step = 0
         self.group = group
         self.condense_factor = condense_factor
-        self.count = 0
-
+        self.stage = 0
+        self.batch_size = 16
         self._define_inputs()
         self._build_graph()
         self._initialize_session()
@@ -136,7 +138,7 @@ class CondenseNet:
     @property
     def model_identifier(self):
         return "{}_growth_rate={}_depth={}_dataset_{}".format(
-            self.model_type, self.growth_rate, self.depth, self.dataset_name)
+            self.model_type, self.increasing_growth_rate, self.depth, self.dataset_name)
 
     def save_model(self, global_step=None):
         self.saver.save(self.sess, self.save_path, global_step=global_step)
@@ -168,7 +170,7 @@ class CondenseNet:
         shape.extend(self.data_shape)
         self.images = tf.placeholder(tf.float32, shape=shape, name='input_images')
         self.labels = tf.placeholder(tf.float32, shape=[None, self.n_classes], name='labels')
-        self.learning_rate = tf.placeholder(tf.float32, shape=[], name='learning rate')
+        self.learning_rate = tf.placeholder(tf.float32, shape=[], name='learning_rate')
         self.is_training = tf.placeholder(tf.bool, shape=[])
 
     def composite_function(self, _input, out_features, kernel_size=3):
@@ -190,11 +192,11 @@ class CondenseNet:
         return output
 
     def bottleneck_condense(self, _input, out_features):
-        with tf.variable_scope("bottleneck"):
-            output = self.batch_norm(_input)
-            output = tf.nn.relu(output)
+        output = self.batch_norm(_input)
+        output = tf.nn.relu(output)
+        with tf.variable_scope("learned_group_conv"):
             output = self.learned_group_conv2d(output, 1, out_features)
-            output = self.dropout(output)
+        output = self.dropout(output)
         return output
 
     def add_internal_layers(self, _input, growth_rate):
@@ -203,9 +205,10 @@ class CondenseNet:
         input with output from composite function.
         """
         # call composite function with 3*3 Conv layers
-        bottleneck_out = self.bottleneck_condense(_input, out_features=growth_rate * 4)
-        shuffle_out = self.shufflelayers(bottleneck_out)
-        comp_out = self.composite_function(shuffle_out, out_features=growth_rate)
+        with tf.variable_scope("bottleneck"):
+            bottleneck_out = self.bottleneck_condense(_input, out_features=growth_rate * 4)
+        #shuffle_out = self.shufflelayers(bottleneck_out)
+        comp_out = self.composite_function(bottleneck_out, out_features=growth_rate)
         # concatenate _input with out from the composite layers
         output = tf.concat(axis=3, values=(_input, comp_out))
         return output
@@ -219,7 +222,7 @@ class CondenseNet:
 
     def transition_layer(self, _input):
         #call composite function with 1x1 kernel
-        out_features=int(int(_input.get_shape()[-1])) * self.reduction
+        out_features = int(int(_input.get_shape()[-1]) * self.reduction)
         output = self.composite_function(_input, out_features=out_features, kernel_size=1)
         #run averagepooling
         output = self.avg_pooling(output, k=2)
@@ -236,62 +239,60 @@ class CondenseNet:
         output = self.batch_norm(_input)
         output = tf.nn.relu(output)
         last_pool_kernel = int(output.get_shape()[-2])
-        output = self.avg_pooling(output, k = last_pool_kernel)
+        output = self.avg_pooling(output, k=last_pool_kernel)
         features_total = int(output.get_shape()[-1])
-        output = tf.reshape(output, [-1,features_total])
-        W = self.weight_variable_xavier([features_total,self.n_classes])
+        output = tf.reshape(output, [-1, features_total])
+        W = self.weight_variable_xavier([features_total, self.n_classes], name='w')
         bias = self.bias_variable([self.n_classes])
-        logits = tf.matmul(output,W) + bias
+        logits = tf.matmul(output, W) + bias
         return logits
 
     def shufflelayers(self, _input):
-        features_num = _input.get_shape[3]
-        batch_size = _input.get_shape[0]
-        height = _input.get_shape[1]
-        width = _input.get_shape[2]
+
+        height = int(_input.get_shape()[1])
+        width = int(_input.get_shape()[2])
+        features_num = int(_input.get_shape()[3])
         features_per_group = features_num // self.group
-        # tranpose and shuffle
-        _input = tf.reshape(_input, shape=[batch_size, height, width, features_per_group,self.group])
+        # transpose and shuffle
+        _input = tf.reshape(_input, shape=[self.batch_size, height, width, features_per_group, self.group])
         _input = tf.transpose(_input, perm=[0, 1, 2, 4, 3])
-        output = tf.reshape(_input, [batch_size, height, width, -1])
+        output = tf.reshape(_input, [self.batch_size, height, width, -1])
         return output
 
     def groupconv2d(self, _input, out_features, kernel_size, strides):
         # group the feature maps
         with tf.variable_scope("groupConv"):
-            features_num = _input.get_shape[-1]
+            features_num = int(_input.get_shape()[-1])
             grouped_features = tf.split(_input, num_or_size_splits=self.group, axis=3)
-            first_output = self.conv2d(grouped_features[0],
-                                       out_features=out_features // self.group,
-                                       kernel_size=kernel_size,
-                                       strides=strides)
-            for g in range(1, self.group):
-                grouped_output = self.conv2d(grouped_features[g],
-                                             out_features=self.increasing_growth_rate // self.group,
-                                             kernel_size=3,
-                                             strides=strides)
-                first_output = tf.concat(axis=3, values=(first_output, grouped_output))
-            return first_output
+            group_ouputs = []
+            for i in range(self.group):
+                group_ouputs.append(self.conv2d(grouped_features[i],
+                                                out_features=out_features // self.group,
+                                                kernel_size=kernel_size,
+                                                strides=strides,
+                                                name='group_kernel_%d' % i))
+            output = tf.concat(group_ouputs, axis=3)
+            return output
 
     def learned_group_conv2d(self, _input, kernel_size, out_channels):
-        in_channels = _input.get_shape()[-1]
-        with tf.variable_scope("Learned_group_conv"):
-            # check group and condense_factor
-            assert _input.get_shape()[-1] % self.group == 0, "group number cannot be divided by input channels"
-            assert _input.get_shape()[-1] % self.condense_factor == 0, "condensation factor can not be divided by input channels"
-            mask = tf.get_variable("mask", [kernel_size, kernel_size, in_channels, out_channels],
-                                   initializer=tf.constant_initializer(0))
-            weight = self.weight_variable_msra(shape=[kernel_size, kerne_lsize, in_channels, out_channels],
-                                               name="weight")
-            output = tf.nn.conv2d(_input, tf.matmul(weight, mask), [1, 1, 1, 1], padding='SAME')
-            assert output % self.group == 0, "group number can not be divided by output channels"
-
+        in_channels = int(_input.get_shape()[-1])
+        mask_scale = out_channels // self.group
+        # check group and condense_factor
+        assert _input.get_shape()[-1] % self.group == 0, "group number cannot be divided by input channels"
+        assert _input.get_shape()[-1] % self.condense_factor == 0, "condensation factor can not be divided by input channels"
+        weight = self.weight_variable_msra(shape=[kernel_size, kernel_size, in_channels, out_channels],
+                                           name="weight")
+        print(weight)
+        mask = tf.get_variable("mask", [kernel_size, kernel_size, in_channels, out_channels],
+                               initializer=tf.constant_initializer(1), trainable=False)
+        output = tf.nn.conv2d(_input, tf.multiply(weight, mask), [1, 1, 1, 1], padding='SAME')
+        assert output.get_shape()[-1] % self.group == 0, "group number can not be divided by output channels"
         return output
 
-    def conv2d(self, _input, out_features, kernel_size, strides, padding='SAME'):
+    def conv2d(self, _input, out_features, kernel_size, strides, padding='SAME', name='kernel'):
         in_features = int(_input.get_shape()[-1])
         kernel = self.weight_variable_msra(shape=[kernel_size, kernel_size, in_features, out_features],
-                                           name='kernel')
+                                           name=name)
         output = tf.nn.conv2d(_input, kernel, strides, padding)
         return output
 
@@ -303,11 +304,11 @@ class CondenseNet:
         return output
 
     def batch_norm(self, _input):
-        output = tf.contrib.layers.batch_norm(_input, scale=True, is_trainning=self.is_training,update_collections=None)
+        output = tf.contrib.layers.batch_norm(_input, scale=True, is_training=self.is_training, updates_collections=None)
         return output
 
     def dropout(self, _input):
-        if self.keep_prob < 1:
+        if self.keep_prob < 1 :
             output = tf.cond(
                 self.is_training,
                 lambda: tf.nn.dropout(_input, self.keep_prob),
@@ -341,11 +342,10 @@ class CondenseNet:
             logits = self.transition_layer_to_classes(output)
         prediction = tf.nn.softmax(logits)
         # Losses
-        loss = tf.get_variable("loss", [1], initializer=tf.constant_initializer(0.0))
         cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=self.labels))
         self.cross_entropy = cross_entropy
         l2_loss = tf.add_n([tf.nn.l2_loss(var) for var in tf.trainable_variables()])
-        lasso_loss = self.lasso_loss(loss)
+        lasso_loss = self.lasso_loss()
         # optimizer and training step
         optimizer = tf.train.MomentumOptimizer(
             self.learning_rate, self.nesterov_momentum, use_nesterov=True)
@@ -368,7 +368,6 @@ class CondenseNet:
             if epoch == reduce_lr_epoch_1 or epoch == reduce_lr_epoch_2:
                 learning_rate = learning_rate / 10
                 print("Decrease learning rate, new lr = %f" % learning_rate)
-
             print("Training...")
             loss, acc = self.train_one_epoch(
                 self.data_provider.train, batch_size, learning_rate)
@@ -389,7 +388,6 @@ class CondenseNet:
                 str(timedelta(seconds=seconds_left))))
             if self._check_drop():
                 self.dropping()
-
             if self.should_save_model:
                 self.save_model()
 
@@ -398,7 +396,8 @@ class CondenseNet:
             seconds=total_training_time)))
 
     def train_one_epoch(self, data, batch_size, learning_rate):
-        num_examples = data.num_examples
+        #num_examples = data.num_examples
+        num_examples = 50
         total_loss = []
         total_accuracy = []
         for i in range(num_examples // batch_size):
@@ -426,7 +425,8 @@ class CondenseNet:
         return mean_loss, mean_accuracy
 
     def test(self, data, batch_size):
-        num_examples = data.num_examples
+        #num_examples = data.num_examples
+        num_examples = 10
         total_loss = []
         total_accuracy = []
         for i in range(num_examples // batch_size):
@@ -444,18 +444,18 @@ class CondenseNet:
         mean_accuracy = np.mean(total_accuracy)
         return mean_loss, mean_accuracy
 
-    def lasso_loss(self, loss):
+    def lasso_loss(self):
         """
         generate the lasso_loss regular item
         """
+        loss=[0.0]
         with tf.variable_scope("", reuse=True):
             for i in range(self.total_blocks):
                 for j in range(self.layers_per_block):
-                    weight = tf.get_variable("Block_%d/layer_%d/bottleneck/Learned_group_conv/weight" % (i, j))
-                    mask = tf.get_variable("Block_%d/layer_%d/bottleneck/Learned_group_conv/mask" % (i, j))
-                    weight = tf.matmul(weight, mask)
-                    in_channels = weight.get_shape()[-2]
-                    out_channels = weight.get_shape()[-1]
+                    with tf.variable_scope("Block_%d/layer_%d/bottleneck/learned_group_conv" % (i, j)):
+                        weight = tf.get_variable("weight")
+                    in_channels = int(weight.get_shape()[-2])
+                    out_channels = int(weight.get_shape()[-1])
                     d_out = out_channels // self.group
                     assert weight.get_shape()[0] == 1
                     weight = tf.squeeze(weight)
@@ -468,60 +468,50 @@ class CondenseNet:
 
     def _check_drop(self):
         progress = self.globalprogress
+        old_stage = self.stage
         # get current stage
         for i in range(self.condense_factor - 1):
             if progress * 2 < (i + 1) / (self.condense_factor - 1):
-                stage = i
+                self.stage = i
                 break
         else:
-            stage = self.condense_factor - 1
+            self.stage = self.condense_factor - 1
 
         # Need Pruning?
-        if self.stage != stage:
-            self.stage = stage
-            return True
-        else:
-            return False
+        return old_stage != self.stage
 
     def dropping(self):
-        with tf.variable_scope("", reuse=True):
-            for i in range(self.total_blocks):
-                for j in range(self.layers_per_block):
-                    weight = tf.get_variable("Block_%d/layer_%d/bottleneck/Learned_group_conv/weight" % (i, j))
-                    mask = tf.get_variable("Block_%d/layer_%d/bottleneck/Learned_group_conv/mask" % (i, j))
-                    self._dropping(weight.get_shape()[-1]//self.group, weight, mask)
+        print("stage_%d" % self.stage)
+        for i in range(self.total_blocks):
+            for j in range(self.layers_per_block):
+                print("pruning the Block_%d/layer_%d/bottleneck/learned_group_conv" % (i, j))
+                with tf.variable_scope("Block_%d/layer_%d/bottleneck/learned_group_conv" % (i, j), reuse=True):
+                    weight = tf.get_variable("weight")
+                    mask = tf.get_variable("mask")
+                    in_channels = int(weight.get_shape()[-2])
+                    d_in = in_channels // self.condense_factor
+                    d_out = int(weight.get_shape()[-1]) // self.group
+                    zeros = tf.zeros([d_out])
+                    weight_s = tf.abs(tf.squeeze(weight))
+                    k = in_channels - (d_in * self.stage)
+                    # Sort and Drop
+                    for group in range(self.group):
+                        wi = weight_s[:, group * d_out:(group + 1) * d_out]
+                        # take corresponding delta index
+                        _, index = tf.nn.top_k(tf.reduce_sum(wi, axis=1), k=k, sorted=True)
+                        d = self.sess.run(index)
+                        for _in in range(d_in):
+                            # Assume only apply to 1x1 conv to speed up
+                            self.sess.run(tf.assign(mask[0, 0, d[-(_in + 1)], group*d_out:(group + 1)*d_out], zeros))
 
-    def _dropping(self, delta, weight, mask):
-        """
-        dropping the weight by using the mask
-        shape of the weight : kernel_size, kernel_size, in_channels, out_channels
-        """
-        in_channels = weight.get_shape()[-2]
-        out_channels = weight.get_shape()[-1]
-        dw = tf.matmul(weight, mask)
-        # Assume only apply to 1x1 conv to speed up
-        dw = tf.abs(tf.squeeze(dw))
-        # shuffle weight
-        d_out = out_channels // self.group
-        dw = tf.reshape(dw, [in_channels, d_out, self.group])
-        dw = tf.transpose(dw, [0, 2, 1])
-        dw = tf.reshape(dw, [in_channels, -1])
-        # Sort and Drop
-        for i in range(self.group):
-            wi = weight[:, i*d_out:(i+1)*d_out]
-            # take corresponding delta index
-            di, index = tf.nn.top_k(tf.reduce_sum(wi, axis=1), k=self.count, sorted=True)
-            for d in index[-delta:]:
-                tf.assign(mask[:, :, d, i::self.group], 0)
-        self.count = self.count - delta
 
     def weight_variable_msra(self, shape, name=None):
         return tf.get_variable(name=name,
                                shape=shape,
-                               initializer=tf.contrib.layer.variance_scaling_initializier())
+                               initializer=tf.contrib.layers.variance_scaling_initializer())
 
     def weight_variable_xavier(self, shape, name=None):
-        return tf.get_variable(name,
+        return tf.get_variable(name=name,
                                shape=shape,
                                initializer=tf.contrib.layers.xavier_initializer())
 

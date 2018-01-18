@@ -222,10 +222,16 @@ class Cifar10DataProvider(CifarDataProvider):
 
     def get_filenames(self, save_path):
         sub_save_path = os.path.join(save_path, 'cifar-10-batches-py')
+        ''' ccx
         train_filenames = [
             os.path.join(
                 sub_save_path,
                 'data_batch_%d' % i) for i in range(1, 6)]
+        '''
+        train_filenames = [
+            os.path.join(
+                sub_save_path,
+                'data_batch_%d' % i) for i in range(1, 2)]
         test_filenames = [os.path.join(sub_save_path, 'test_batch')]
         return train_filenames, test_filenames
 

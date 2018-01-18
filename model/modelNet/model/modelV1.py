@@ -10,7 +10,7 @@ import tensorflow as tf
 TF_VERSION = float('.'.join(tf.__version__.split('.')[:2]))
 
 
-class DenseNet:
+class CondenseNet:
     def __init__(self, data_provider, growth, depth,
                  total_blocks,stages, keep_prob,
                  weight_decay, nesterov_momentum, model_type, dataset,
@@ -59,11 +59,14 @@ class DenseNet:
         self.group_1x1 = kwargs['group_1x1']
         self.group_3x3 = kwargs['group_3x3']
         self.condense_factor = kwargs['condense_factor']
+        self.bottleneck = kwargs['bottleneck']
+        self.group_lasso_lambda= kwargs['group_lasso_lambda']
 
         #self.layers_per_block = (depth - (total_blocks + 1)) // total_blocks
         self.bc_mode = bc_mode
         # compression rate at the transition layers
         self.reduction = reduction
+        '''
         if not bc_mode:
             print("Build %s model with %d blocks, "
                   "%d composite layers each." % (
@@ -74,6 +77,7 @@ class DenseNet:
                   "%d bottleneck layers and %d composite layers each." % (
                       model_type, self.total_blocks, self.layers_per_block,
                       self.layers_per_block))
+        '''
         print("Reduction at transition layers: %.1f" % self.reduction)
 
         self.keep_prob = keep_prob
@@ -86,6 +90,7 @@ class DenseNet:
         self.renew_logs = renew_logs
         self.batches_step = 0
 
+        self._stage = 0
         self._define_inputs()
         self._build_graph()
         self._initialize_session()
@@ -143,7 +148,7 @@ class DenseNet:
     @property
     def model_identifier(self):
         return "{}_growth_rate={}_depth={}_dataset_{}".format(
-            self.model_type, self.growth_rate, self.depth, self.dataset_name)
+            self.model_type, self.growth[0], self.depth, self.dataset_name)
 
     def save_model(self, global_step=None):
         self.saver.save(self.sess, self.save_path, global_step=global_step)
@@ -212,13 +217,17 @@ class DenseNet:
             output = self.dropout(output)
         return output
 
+
     def learn_group_cov(self, _input, out_features, groups):
         '''add by ccx'''
+        assert (_input.get_shape()[-1]) % groups == 0, "group number can not be divided by input channels"
+        assert (_input.get_shape()[-1]) % self.condense_factor == 0, "condensation factor can not be divided by input channels"
+        assert out_features % groups == 0, "group number can not be divided by output channels"
         with tf.variable_scope("learn_Group_Conv"):
             output = self.batch_norm(_input)
             output = tf.nn.relu(output)
             output = self.dropout(output)
-            output = self.conv2d_group(output, out_features=out_features, kernel_size=1, groups=groups)
+            output = self.conv2d_learn_group(output, out_features=out_features, kernel_size=1, groups=groups)
         return output
 
     def standard_group_cov(self, _input, out_features, groups, kernel_size=3):
@@ -234,21 +243,16 @@ class DenseNet:
             # ReLU
             output = tf.nn.relu(output)
             # convolution
-            output = self.conv2d_group(output, out_features=out_features, kernel_size=kernel_size, groups=groups)
+            output = self.conv2d_standard_group(output, out_features=out_features, kernel_size=kernel_size, groups=groups)
             # dropout(in case of training and in case it is no 1.0)
             output = self.dropout(output)
         return output
-
-    def check_drop(self):
-
 
     def add_internal_layer(self, _input, growth_rate):
         """Perform H_l composite function for the layer and after concatenate
         input with output from composite function.
         """
-        # call composite function with 3x3 kernel
-        self.check_drop()
-        lgc_out = self.learn_group_cov(_input, out_features=growth_rate, groups=self.group_1x1)
+        lgc_out = self.learn_group_cov(_input, out_features=growth_rate*self.bottleneck, groups=self.group_1x1)
         comp_out = self.standard_group_cov(lgc_out, out_features=growth_rate, kernel_size=3, groups=self.group_3x3)
         # concatenate _input with out from composite function
 
@@ -300,12 +304,32 @@ class DenseNet:
         output = tf.nn.conv2d(_input, kernel, strides, padding)
         return output
 
-    def conv2d_group(self, _input, out_features, kernel_size, strides=[1, 1, 1, 1], padding='SAME'):
+    def conv2d_learn_group(self, _input, out_features, kernel_size,groups, strides=[1, 1, 1, 1], padding='SAME'):
         in_features = int(_input.get_shape()[-1]) # get the last dimension, channel
         kernel = self.weight_variable_msra(
             [kernel_size, kernel_size, in_features, out_features],
-            name='kernel')
-        output = tf.nn.conv2d(_input, kernel, strides, padding)
+            name='weight')
+        print('learn_group_kernel', kernel)
+        mask = tf.get_variable('mask', initializer=tf.constant(1.0, shape=kernel.get_shape()), trainable=False)
+        output = tf.nn.conv2d(_input, (kernel*mask), strides, padding)
+        return output
+
+    def conv2d_standard_group(self, _input, out_features, kernel_size, groups, strides=[1, 1, 1, 1], padding='SAME'):
+        print(_input.get_shape())
+        in_features = int(_input.get_shape()[-1]) # get the last dimension, channel
+        d_in = in_features // groups
+        kernel = self.weight_variable_msra(
+            [kernel_size, kernel_size, d_in, out_features],
+            name='weight')
+        print('standard_group_kernel',kernel)
+        d_out = out_features // groups
+        for i in range(groups):
+            group_output = tf.nn.conv2d(_input[:,:,:,i*d_in:(i+1)*d_in], kernel[:,:,:,i*d_out:(i+1)*d_out], strides, padding)
+            if not i == 0:
+                output = tf.concat(axis=3, values=(output_1, group_output))
+            else:
+                output_1 = group_output
+        print(output.get_shape())
         return output
 
     def avg_pool(self, _input, k):
@@ -354,16 +378,19 @@ class DenseNet:
         # first - initial 3 x 3 conv and 1x1 conv ? to first_output_features --changed by ccx
         with tf.variable_scope("Initial_convolution"):
             output = self.conv2d(self.images, out_features=self.first_output_features, kernel_size=3)
-            output = self.conv2d(output, out_features=self.first_output_features, kernel_size=1) #???
+            #output = self.conv2d(output, out_features=self.first_output_features, kernel_size=1) #???
 
         # add N DenseBlock
         for block in range(self.total_blocks):
             with tf.variable_scope("Block_%d" % block):
-                output = self.add_block(output, growth[block], self.stages[block])
+                output = self.add_block(output, self.growth[block], self.stages[block])
+                print('after Block_%d' % block, output)
             # last block exist without transition layer
             if block != self.total_blocks - 1:
                 with tf.variable_scope("Transition_after_block_%d" % block):
                     output = self.transition_layer(output)
+
+        print('after all block----',output)
 
         with tf.variable_scope("Transition_to_classes"):
             logits = self.transition_layer_to_classes(output)
@@ -374,15 +401,70 @@ class DenseNet:
             logits=logits, labels=self.labels))
         self.cross_entropy = cross_entropy
         l2_loss = tf.add_n([tf.nn.l2_loss(var) for var in tf.trainable_variables()])
+        lasso_loss = self.lasso_loss()
 
         # optimizer and train step
         optimizer = tf.train.MomentumOptimizer(self.learning_rate, self.nesterov_momentum, use_nesterov=True)
-        self.train_step = optimizer.minimize(cross_entropy + l2_loss * self.weight_decay)
+        self.train_step = optimizer.minimize(cross_entropy + l2_loss * self.weight_decay + lasso_loss * self.group_lasso_lambda)
 
         correct_prediction = tf.equal(
             tf.argmax(prediction, 1),
             tf.argmax(self.labels, 1))
         self.accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+
+    def lasso_loss(self):
+        loss = [0.0]
+        for i in range(self.total_blocks):
+            for j in range(self.stages[i]):
+                with tf.variable_scope("Block_%d/layer_%d/learn_Group_Conv" % (i,j), reuse=True):
+                    weight = tf.get_variable("weight")
+                in_channels = int(weight.get_shape()[-2])
+                out_channels = int(weight.get_shape()[-1])
+                d_out = out_channels // self.group_1x1
+                assert weight.get_shape()[0] == 1
+                weight = tf.squeeze(weight)
+                weight = tf.square(weight)
+                tf.reshape(weight, [in_channels, d_out, self.group_1x1])
+                weight = tf.sqrt(tf.reduce_sum(weight, axis=1))
+                weight = tf.reduce_sum(weight)
+                loss = tf.add(loss, weight)
+        return loss
+
+
+    def stage(self, epoch, epochs):
+        self._at_stage = True
+        for ci in range(self.condense_factor - 1):
+            if epoch < (epochs/(2*(self.condense_factor - 1)))*(ci+1):
+                stage = ci
+                break
+        else:
+            stage = self.condense_factor - 1
+        if not self._stage == stage:
+            self._stage = stage
+            self._at_stage = False
+
+    def droping(self):
+        print("stage%d prunning...." % self._stage)
+        for i in range(self.total_blocks):
+            for j in range(self.stages[i]):
+                print("pruning the Block_%d/layer_%d/learn_Group_Conv" % (i, j))
+                with tf.variable_scope("Block_%d/layer_%d/learn_Group_Conv" % (i, j), reuse=True):
+                    kernel = tf.get_variable("weight")
+                    mask = tf.get_variable("mask")
+                delta = in_features // self.condense_factor # the num need to prune
+                d_out = out_features // groups # the num of filters(feature maps) of each group
+                weight = abs(kernel).squeeze()
+                assert weight.get_shape()[0] == in_features
+                assert weight.get_shape()[1] == out_features
+                weight = weight.reshape(in_features, d_out, groups)
+                weight = weight.transpose(0,2,1)
+                weight = weight.reshape(in_features, out_features)
+                for i in range(groups):
+                    wi = weight[:, i*d_out:(i+1)*d_out]
+                    di = np.argsort(wi.sum(1))[(self._stage-1) * delta : self._stage * delta]
+                    mask_tmp = self.sess.run(mask)
+                    mask_tmp[:, :, di, i::groups] = 0
+                    self.sess.run(tf.assign(mask, mask_tmp))
 
     def train_all_epochs(self, train_params):
         n_epochs = train_params['n_epochs']
@@ -392,7 +474,9 @@ class DenseNet:
         reduce_lr_epoch_2 = train_params['reduce_lr_epoch_2']
         total_start_time = time.time()
         for epoch in range(1, n_epochs + 1):
-            self.cur_epoch = epoch # global var
+            self.stage(epoch, n_epochs)
+            if not self._at_stage:
+                self.droping()
             print("\n", '-' * 30, "Train epoch: %d" % epoch, '-' * 30, '\n')
             start_time = time.time()
             if epoch == reduce_lr_epoch_1 or epoch == reduce_lr_epoch_2:
@@ -423,7 +507,8 @@ class DenseNet:
         print("\nTotal training time: %s" % str(timedelta(seconds=total_training_time)))
 
     def train_one_epoch(self, data, batch_size, learning_rate):
-        num_examples = data.num_examples
+        #num_examples = data.num_examples
+        num_examples = 50
         total_loss = []
         total_accuracy = []
         for i in range(num_examples // batch_size):
@@ -450,7 +535,8 @@ class DenseNet:
         return mean_loss, mean_accuracy
 
     def test(self, data, batch_size):
-        num_examples = data.num_examples
+        #num_examples = data.num_examples
+        num_examples = 10
         total_loss = []
         total_accuracy = []
         for i in range(num_examples // batch_size):
