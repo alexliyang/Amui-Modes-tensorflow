@@ -451,21 +451,21 @@ class CondenseNet:
                 with tf.variable_scope("Block_%d/layer_%d/learn_Group_Conv" % (i, j), reuse=True):
                     kernel = tf.get_variable("weight")
                     mask = tf.get_variable("mask")
-                in_features = kernel.get_shape()[-2];
-                out_features = kernel.get_shape()[-1];
-                delta = in_features // self.condense_factor # the num need to prune
-                d_out = out_features // groups # the num of filters(feature maps) of each group
+                in_features = kernel.get_shape()[-2]
+                out_features = kernel.get_shape()[-1]
                 weight = abs(kernel).squeeze()
                 assert weight.get_shape()[0] == in_features
                 assert weight.get_shape()[1] == out_features
-                weight = weight.reshape(in_features, d_out, groups)
+                delta = in_features // self.condense_factor  # the num need to prune
+                d_out = out_features // self.group_1x1  # the num of filters(feature maps) of each group
+                weight = weight.reshape(in_features, d_out, self.group_1x1)
                 weight = weight.transpose(0,2,1)
                 weight = weight.reshape(in_features, out_features)
-                for i in range(groups):
+                for i in range(self.group_1x1):
                     wi = weight[:, i*d_out:(i+1)*d_out]
                     di = np.argsort(wi.sum(1))[(self._stage-1) * delta : self._stage * delta]
                     mask_tmp = self.sess.run(mask)
-                    mask_tmp[:, :, di, i::groups] = 0
+                    mask_tmp[:, :, di, i::self.group_1x1] = 0
                     self.sess.run(tf.assign(mask, mask_tmp))
 
     def train_all_epochs(self, train_params):
