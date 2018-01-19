@@ -45,11 +45,11 @@
           </provider>
         </entry>
       </file>
-      <file leaf-file-name="modelV1.py" pinned="false" current-in-tab="false">
+      <file leaf-file-name="modelV1.py" pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/model/modelV1.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="461">
-              <caret line="453" column="53" lean-forward="false" selection-start-line="453" selection-start-column="53" selection-end-line="453" selection-end-column="53" />
+            <state relative-caret-position="-1177">
+              <caret line="332" column="21" lean-forward="true" selection-start-line="332" selection-start-column="21" selection-end-line="332" selection-end-column="21" />
               <folding>
                 <element signature="e#0#9#0" expanded="true" />
               </folding>
@@ -75,16 +75,6 @@
               <folding>
                 <element signature="e#0#9#0" expanded="true" />
               </folding>
-            </state>
-          </provider>
-        </entry>
-      </file>
-      <file leaf-file-name="dense_net.py" pinned="false" current-in-tab="true">
-        <entry file="file://$PROJECT_DIR$/model/dense_net.py">
-          <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="168">
-              <caret line="356" column="44" lean-forward="true" selection-start-line="356" selection-start-column="44" selection-end-line="356" selection-end-column="44" />
-              <folding />
             </state>
           </provider>
         </entry>
@@ -152,8 +142,8 @@
         <option value="$PROJECT_DIR$/model/condenseNet.py" />
         <option value="$PROJECT_DIR$/run_model.py" />
         <option value="$PROJECT_DIR$/data_providers/cifar.py" />
-        <option value="$PROJECT_DIR$/model/modelV1.py" />
         <option value="$PROJECT_DIR$/data_providers/utils.py" />
+        <option value="$PROJECT_DIR$/model/modelV1.py" />
       </list>
     </option>
   </component>
@@ -693,31 +683,11 @@
         </state>
       </provider>
     </entry>
-    <entry file="file://$PROJECT_DIR$/model/condenseNet.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="146">
-          <caret line="502" column="47" lean-forward="true" selection-start-line="502" selection-start-column="47" selection-end-line="502" selection-end-column="47" />
-          <folding>
-            <element signature="e#0#9#0" expanded="true" />
-          </folding>
-        </state>
-      </provider>
-    </entry>
     <entry file="file://$PROJECT_DIR$/data_providers/p_data_input.py">
       <provider selected="true" editor-type-id="text-editor">
         <state relative-caret-position="576">
           <caret line="134" column="0" lean-forward="true" selection-start-line="134" selection-start-column="0" selection-end-line="134" selection-end-column="0" />
           <folding />
-        </state>
-      </provider>
-    </entry>
-    <entry file="file://$PROJECT_DIR$/model/modelV1.py">
-      <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="461">
-          <caret line="453" column="53" lean-forward="false" selection-start-line="453" selection-start-column="53" selection-end-line="453" selection-end-column="53" />
-          <folding>
-            <element signature="e#0#9#0" expanded="true" />
-          </folding>
         </state>
       </provider>
     </entry>
@@ -751,9 +721,29 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/model/dense_net.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="168">
-          <caret line="356" column="44" lean-forward="true" selection-start-line="356" selection-start-column="44" selection-end-line="356" selection-end-column="44" />
+        <state relative-caret-position="510">
+          <caret line="369" column="38" lean-forward="true" selection-start-line="369" selection-start-column="38" selection-end-line="369" selection-end-column="38" />
           <folding />
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/model/condenseNet.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="146">
+          <caret line="502" column="47" lean-forward="true" selection-start-line="502" selection-start-column="47" selection-end-line="502" selection-end-column="47" />
+          <folding>
+            <element signature="e#0#9#0" expanded="true" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/model/modelV1.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="-1177">
+          <caret line="332" column="21" lean-forward="true" selection-start-line="332" selection-start-column="21" selection-end-line="332" selection-end-column="21" />
+          <folding>
+            <element signature="e#0#9#0" expanded="true" />
+          </folding>
         </state>
       </provider>
     </entry>
