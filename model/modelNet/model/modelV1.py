@@ -451,6 +451,7 @@ class CondenseNet:
                 with tf.variable_scope("Block_%d/layer_%d/learn_Group_Conv" % (i, j), reuse=True):
                     kernel = tf.get_variable("weight")
                     mask = tf.get_variable("mask")
+                in_features = kernel.get_shape()[-2];
                 delta = in_features // self.condense_factor # the num need to prune
                 d_out = out_features // groups # the num of filters(feature maps) of each group
                 weight = abs(kernel).squeeze()
