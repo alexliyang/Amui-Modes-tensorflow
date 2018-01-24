@@ -110,7 +110,7 @@ class CondenseNet:
             self.sess.run(tf.global_variables_initializer())
             logswriter = tf.summary.FileWriter
         self.saver = tf.train.Saver()
-        self.summary_writer = logswriter(self.logs_path, graph_def=self.sess.graph_def) # change by ccx, add the graph_def
+        self.summary_writer = logswriter(self.logs_path, graph=self.sess.graph) # change by ccx, add the graph_def
 
     def _count_trainable_params(self):
         total_parameters = 0
@@ -253,7 +253,7 @@ class CondenseNet:
         input with output from composite function.
         """
         lgc_out = self.learn_group_cov(_input, out_features=growth_rate*self.bottleneck, groups=self.group_1x1)
-        comp_out = self.standard_group_cov(lgc_out, out_features=growth_rate, kernel_size=3, groups=self.group_3x3)
+        comp_out = self.standard_group_cov(lgc_out, out_features=growth_rate*self.bottleneck, kernel_size=3, groups=self.group_3x3)
         # concatenate _input with out from composite function
 
         output = tf.concat(axis=3, values=(_input, comp_out))
