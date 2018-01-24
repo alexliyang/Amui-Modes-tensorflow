@@ -326,9 +326,9 @@ class CondenseNet:
         for i in range(groups):
             group_output = tf.nn.conv2d(_input[:,:,:,i*d_in:(i+1)*d_in], kernel[:,:,:,i*d_out:(i+1)*d_out], strides, padding)
             if not i == 0:
-                output = tf.concat(axis=3, values=(output_1, group_output))
+                output = tf.concat(axis=3, values=(output, group_output))
             else:
-                output_1 = group_output
+                output = group_output
         print(output.get_shape())
         return output
 
@@ -453,7 +453,7 @@ class CondenseNet:
                     mask = tf.get_variable("mask")
                 in_features = kernel.get_shape()[-2]
                 out_features = kernel.get_shape()[-1]
-                weight = abs(kernel).squeeze()
+                weight = tf.squeeze(abs(kernel))
                 assert weight.get_shape()[0] == in_features
                 assert weight.get_shape()[1] == out_features
                 delta = in_features // self.condense_factor  # the num need to prune
